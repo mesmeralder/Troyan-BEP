@@ -169,44 +169,33 @@ class gravity_model:
         plt.show()
 
     def plotResonanceRatio(self, targets):
-        N = len(self.point_mass_objects)
-        if not isinstance(targets, list):
-            raise Exception("targets should be a list")
-        elif len(targets) != 2:
-            raise Exception("targets not correct size")
-        elif not (isinstance(targets[0], int) and isinstance(targets[1], int)):
-            raise Exception("targets not correct type")
-        elif not (0 <= targets[0] < N and 0 <= targets[1] < N):
-            raise Exception("targets not in valid range")
+        target_1 = targets[0]
+        target_2 = targets[1]
 
-        k = 100
-        time_values = np.linspace(0, self.t, k)
-        period_values = np.zeros(len(time_values))
+        periods_1 = np.array([snapshot[target_1].CalculateSemiMajor()**3/2 for snapshot in self.saves])
+        periods_2 = np.array([snapshot[target_2].CalculateSemiMajor()**3/2 for snapshot in self.saves])
 
-        i_1 = targets[0]
-        i_2 = targets[1]
+        plt.plot(periods_1 / periods_2)
+        plt.show()
 
-        def calculatePeriods(i):
-            period_succeeded_values = self.period_saves[i].pop(0)
-            if period_succeeded_values <= 1:
-                raise Exception("No period succeeded yet")
+    def PlotSemiMajor(self, targets=None):
+        if targets is None:
+            targets = range(len(self.point_mass_objects))
 
-            t_write = period_succeeded_values[1]
-            last_t = 0
-            for i, t in enumerate(time_values):
-                if len(period_succeeded_values) == 0:
-                    break
-                if t > period_succeeded_values[0]:
-                    t_write = period_succeeded_values[0] - last_t
-                    last_t = period_succeeded_values[0]
-                    period_succeeded_values.pop(0)
-                period_values[i] = t_write
+        for i in targets:
+            eccentricities = [snapshot[i].CalculateSemiMajor() for snapshot in self.saves]
+            plt.plot(eccentricities)
+        plt.legend()
+        plt.show()
 
-        period_values_1 = calculatePeriods(i_1)
-        period_values_2 = calculatePeriods(i_2)
-        ratio = period_values_1 / period_values_2
+    def PlotEccentricies(self, targets=None):
+        if targets is None:
+            targets = range(len(self.point_mass_objects))
 
-        plt.plot(ratio, time_values)
+        for i in targets:
+            eccentricities = [snapshot[i].CalculateEccentricity() for snapshot in self.saves]
+            plt.plot(eccentricities)
+        plt.legend()
         plt.show()
 
 
@@ -229,6 +218,22 @@ class point_mass:
         abs_r = np.linalg.norm(r)
         return G * self.mass * other_object.mass * r / (abs_r * abs_r * abs_r)
 
+    def CalculateEnergyDensity(self):
+        position_norm = np.linalg.norm(self.position)
+        velocity_norm = np.linalg.norm(self.velocity)
+        return - G_times_mass_sun / position_norm + velocity_norm * velocity_norm / 2
+
+    def CalculateAngularMomentumDensity(self):
+        return np.cross(self.velocity, self.position)
+
+    def CalculateSemiMajor(self):
+        return -G_times_mass_sun / (2 * self.CalculateEnergyDensity())
+
+    def CalculateEccentricity(self):
+        l = self.CalculateAngularMomentumDensity()
+        l_squared = np.dot(l,l)
+        a = self.CalculateSemiMajor()
+        return np.sqrt(1 - l_squared / (G_times_mass_sun * a))
 
 class test_particle:
     def __init__(self, position, velocity, mass):
@@ -253,7 +258,7 @@ class test_particle:
 
 
 
-def build_resonance_chain(resonances, eccentricities=None, angles=None):
+def build_resonance_chain(resonances, eccentricities=None, angles=None, distance=distance_jupiter):
     N = len(resonances)
 
     if eccentricities==None:
@@ -263,8 +268,6 @@ def build_resonance_chain(resonances, eccentricities=None, angles=None):
 
     if not (N+1 == len(eccentricities) and N+1 == len(angles)):
         raise Exception("Lengths don't match up")
-
-    distance = distance_jupiter
 
     objects = []
     objects += [point_mass.orbit(distance, mass_jupiter, eccentricity=eccentricities[0], angle=angles[0])]
@@ -279,15 +282,21 @@ def main():
     dt = 1e6
     N = 10**5
 
-    objects = build_resonance_chain([2,2,2])
-    #objects = build_resonance_chain([2])
+    objects = point_mass.orbit(distance_jupiter, mass_jupiter)
+
     model = gravity_model(objects, dt)
 
     model.run(N, iterations_per_save=10**2, count_periods=True)
-    model.show_saves()
-    model.plot_path()
-
+    model.PlotSemiMajor()
+    model.PlotEccentricies()
 
 
 if __name__ == "__main__":
     main()
+
+
+#test for resonance 2 particles
+# e = 0.
+# meet_angle = 2*np.pi * 0
+# distance = distance_jupiter
+# objects = build_resonance_chain([2], eccentricities=[e, 0], angles=[0, meet_angle / 2], distance=distance)
