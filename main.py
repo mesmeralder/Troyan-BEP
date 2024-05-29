@@ -5,6 +5,7 @@ from itertools import combinations
 from matplotlib.widgets import Slider
 import copy
 import pickle
+import math
 
 matplotlib.use('QtAgg')
 
@@ -69,7 +70,7 @@ class GravityModel:
 
         for i in range(len(self.point_mass_objects)):
             mass_object = self.point_mass_objects[i]
-            mass_object.acceleration = forces[i] / mass_object.mass
+            self.point_mass_objects[i].acceleration = forces[i] / mass_object.mass
 
     def time_update(self, dt):
         for mass_object in self.point_mass_objects:
@@ -109,14 +110,15 @@ class GravityModel:
         if number_of_saves > 0:
             iterations_per_save = number_of_iterations // number_of_saves
 
-            saves = [[dt / SECONDS_IN_YEAR * n, []] for n in range(number_of_saves)]
+            saves = [[dt / SECONDS_IN_YEAR * n * iterations_per_save, []] for n in range(number_of_saves)]
 
             for i in range(number_of_iterations):
                 if i in checkpoints:  # progress bar
                     print(str(checkpoints.index(i) * 10) + '% completed')
 
                 if i % iterations_per_save == 0:
-                    saves[i // iterations_per_save][1] = self.point_mass_objects
+                    saves[i // iterations_per_save][1] = copy.deepcopy(self.point_mass_objects)
+
                 self.time_update(dt)
 
         if 'saves' in locals():
@@ -134,7 +136,7 @@ class ModelSaves:
             pickle.dump(self, outp, pickle.HIGHEST_PROTOCOL)
 
     def show_states(self):
-        if len(self.saves) == 0:
+        if len(self.point_mass_objects_saves) == 0:
             raise ValueError("Trying to plot no saves")
 
         fig = plt.figure(figsize=[8, 8])
@@ -144,8 +146,8 @@ class ModelSaves:
 
         s_t = Slider(ax=sax, label='data number', valmin=0, valmax=len(self.saves) - 1, valinit=0)
 
-        x_values = np.array([[object.position[0] for object in snapshot] for snapshot in self.saves]).flatten()
-        y_values = np.array([[object.position[1] for object in snapshot] for snapshot in self.saves]).flatten()
+        x_values = np.array([[object.position[0] for object in snapshot] for snapshot in self.point_mass_objects_saves]).flatten()
+        y_values = np.array([[object.position[1] for object in snapshot] for snapshot in self.point_mass_objects_saves]).flatten()
         minx = np.min(x_values)
         maxx = np.max(x_values)
         miny = np.min(y_values)
@@ -154,14 +156,21 @@ class ModelSaves:
         minval = min(minx, miny)
 
         def update(val):
-            x_positions = [i.position[0] for i in self.saves[int(s_t.val)]]
-            y_positions = [i.position[1] for i in self.saves[int(s_t.val)]]
-
             fax.cla()
-            fax.scatter(x_positions, y_positions)
 
-            fax.set_title(
-                self.saves[int(s_t.val)][1].position[0] ** 2 + self.saves[int(s_t.val)][1].position[1] ** 2)
+            for mass_object in self.point_mass_objects_saves[int(s_t.val)]:
+                a = mass_object.calculate_semi_major()
+                e = mass_object.calculate_eccentricity()
+                pi = mass_object.calculate_pi()
+                b = a * np.sqrt(1 - e*e)
+
+                kakudo = np.linspace(0, 2*np.pi, 100)
+
+                x_ellipse = [np.cos(pi) * (a * np.cos(angle) - a * e) - np.sin(pi) * b * np.sin(angle) for angle in kakudo]
+                y_ellipse = [np.sin(pi) * (a * np.cos(angle) - a * e) + np.cos(pi) * b * np.sin(angle) for angle in kakudo]
+
+                fax.plot(x_ellipse, y_ellipse)
+                fax.scatter(mass_object.position[0], mass_object.position[1])
 
             k = 0.2  # thickness border
             fax.set_xlim(minval - k * (maxval - minval), maxval + k * (maxval - minval))
@@ -200,13 +209,18 @@ class ModelSaves:
 
     def plot_semi_major(self, targets=None):
         if targets is None:
-            targets = range(len(self.point_mass_objects))
+            targets = range(1, len(self.point_mass_objects_saves[0]))
 
+        max_semi_major = 0
         for i in targets:
-            eccentricities = [snapshot[i].calculate_semi_major() for snapshot in self.saves]
-            plt.plot(eccentricities, label='planet ' + str(i))
+            semi_majors = [snapshot[i].calculate_semi_major() for snapshot in self.point_mass_objects_saves]
+            max_semi_major_i = max(semi_majors)
+            if max_semi_major_i > max_semi_major:
+                max_semi_major = max_semi_major_i
+            plt.plot(self.time_value_saves, semi_majors, marker='o', label='planet ' + str(i))
+
         axes = plt.gca()
-        axes.set_ybound(lower=0)
+        axes.set_ybound(lower=0, upper=1.3 * max_semi_major)
         plt.legend()
         plt.show()
 
@@ -214,11 +228,16 @@ class ModelSaves:
         if targets is None:
             targets = range(1, len(self.point_mass_objects_saves[0]))
 
+        max_eccentricity = 0
         for i in targets:
             eccentricities = [snapshot[i].calculate_eccentricity() for snapshot in self.point_mass_objects_saves]
+            max_eccentricity_i = max(eccentricities)
+            if max_eccentricity_i > max_eccentricity:
+                max_eccentricity = max_eccentricity_i
             plt.plot(self.time_value_saves, eccentricities, marker='o', label='planet ' + str(i))
+
         axes = plt.gca()
-        axes.set_ybound(lower=0)
+        axes.set_ybound(lower=0, upper=1.3 * max_eccentricity)
         plt.legend()
         plt.show()
 
@@ -261,6 +280,12 @@ class PointMass:
         a = self.calculate_semi_major()
         return np.sqrt(1 - l_squared / (G_TIMES_MASS_SUN * a))
 
+    def calculate_pi(self):
+        abs_r = np.linalg.norm(self.position)
+        eccentricity_vector = ( (np.dot(self.velocity, self.velocity) - G_TIMES_MASS_SUN / abs_r) * self.position
+                               - np.dot(self.position, self.velocity) * self.velocity ) / G_TIMES_MASS_SUN
+        return math.atan2(eccentricity_vector[1], eccentricity_vector[0])
+
 
 def build_resonance_chain(resonances, eccentricities=None, angles=None, distance=DISTANCE_JUPITER, masses=None):
     N = len(resonances)
@@ -285,17 +310,16 @@ def build_resonance_chain(resonances, eccentricities=None, angles=None, distance
 
 
 def main():
-    dt = 2e6
-    N = 10 ** 5
+    dt = 1e6
+    N = 10 ** 8
 
-    e = 0.05
-    objects = build_resonance_chain([2.], masses=[MASS_JUPITER, MASS_SATURN], eccentricities=[e, 0])
+    objects = build_resonance_chain([2.], masses=[MASS_JUPITER, MASS_SATURN], eccentricities=[0,0])
 
     model = GravityModel(objects)
 
-    saves = model.run(dt, N, 20)
+    saves = model.run(dt, N, 100)
 
-    saves.save_object('Short Eccentricity Test')
+    saves.save_object('Test')
 
 
 if __name__ == "__main__":
