@@ -131,7 +131,7 @@ class ModelSaves:
 
     def save_object(self, filename):
         with open(filename, 'wb') as outp:
-            pickle.dump(ModelSaves, outp, pickle.HIGHEST_PROTOCOL)
+            pickle.dump(self, outp, pickle.HIGHEST_PROTOCOL)
 
     def show_states(self):
         if len(self.saves) == 0:

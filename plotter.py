@@ -1,7 +1,6 @@
-import pickle
-from main import ModelSaves
+from main import *
 
 with open('Short Eccentricity Test', 'rb') as f:
     save = pickle.load(f)
 
-print(save.time_value_saves)
+save.plot_eccentricities()
