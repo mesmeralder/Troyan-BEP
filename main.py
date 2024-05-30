@@ -10,6 +10,8 @@ import math
 matplotlib.use('QtAgg')
 
 G = 6.674e-11  # m3 kg-1 s-2
+AU = 1.496e+11 #m
+
 MASS_SUN = 1.979e30  # kg
 G_TIMES_MASS_SUN = G * MASS_SUN  # m^3 s^-2
 
@@ -110,7 +112,7 @@ class GravityModel:
         if number_of_saves > 0:
             iterations_per_save = number_of_iterations // number_of_saves
 
-            saves = [[dt / SECONDS_IN_YEAR * n * iterations_per_save, []] for n in range(number_of_saves)]
+            saves = [[dt / SECONDS_IN_YEAR * n * iterations_per_save, []] for n in range(number_of_saves + 1)]
 
             for i in range(number_of_iterations):
                 if i in checkpoints:  # progress bar
@@ -120,6 +122,8 @@ class GravityModel:
                     saves[i // iterations_per_save][1] = copy.deepcopy(self.point_mass_objects)
 
                 self.time_update(dt)
+
+            saves[number_of_saves][1] = copy.deepcopy(self.point_mass_objects)
 
         if 'saves' in locals():
             return ModelSaves(saves)
@@ -152,8 +156,7 @@ class ModelSaves:
         maxx = np.max(x_values)
         miny = np.min(y_values)
         maxy = np.max(y_values)
-        maxval = max(maxx, maxy)
-        minval = min(minx, miny)
+        maxval = max(abs(maxx), abs(maxy), abs(minx), abs(miny))
 
         def update(val):
             fax.cla()
@@ -172,39 +175,68 @@ class ModelSaves:
                 fax.plot(x_ellipse, y_ellipse)
                 fax.scatter(mass_object.position[0], mass_object.position[1])
 
-            k = 0.2  # thickness border
-            fax.set_xlim(minval - k * (maxval - minval), maxval + k * (maxval - minval))
-            fax.set_ylim(minval - k * (maxval - minval), maxval + k * (maxval - minval))
+            k = 1.2  # thickness border
+            fax.set_xlim(-k * maxval, k * maxval)
+            fax.set_ylim(-k * maxval, k * maxval)
             fax.set_aspect('equal', adjustable='box')
 
         s_t.on_changed(update)
         update(0)
         plt.show()
 
-    def plot_path(self):
-        for i in range(len(self.point_mass_objects)):
-            plt.plot([snapshot[i].position[0] for snapshot in self.saves],
-                     [snapshot[i].position[1] for snapshot in self.saves])
+    def plot_path(self, targets=[0,1]):
+        true_target = targets[0]
+        reference_target = targets[1]
+
+        angles = [snapshot[reference_target].calculate_pi() for snapshot in self.point_mass_objects_saves]
+
+        rotated_vectors = [np.matmul(rotation_matrix(-angle), self.point_mass_objects_saves[i][true_target].position) for i, angle in enumerate(angles)]
+        x_values = [vector[0] for vector in rotated_vectors]
+        y_values = [vector[1] for vector in rotated_vectors]
+
+        minx = np.min(x_values)
+        maxx = np.max(x_values)
+        miny = np.min(y_values)
+        maxy = np.max(y_values)
+        maxval = max(abs(maxx), abs(maxy), abs(minx), abs(miny))
+
+        plt.scatter(x_values, y_values)
         ax = plt.gca()
+        k = 1.2  # thickness border
+        ax.set_xlim(-k * maxval, k * maxval)
+        ax.set_ylim(-k * maxval, k * maxval)
         ax.set_aspect('equal', adjustable='box')
+        plt.xlabel("distance (m)")
+        plt.ylabel("distance (m)")
         plt.show()
 
-    def plot_radii(self):
-        for i in range(len(self.point_mass_objects)):
-            plt.plot([snapshot[i].position[0] * snapshot[i].position[0] + snapshot[i].position[1] *
-                      snapshot[i].position[1] for snapshot in self.saves])
+    def plot_varpi(self, targets=None):
+        if targets is None:
+            targets = range(1, len(self.point_mass_objects_saves[0]))
+
+        for i in targets:
+            varpis = [snapshot[i].calculate_varpi() for snapshot in self.point_mass_objects_saves]
+            plt.plot(self.time_value_saves, varpis, marker='o', label='planet ' + str(i))
+
+        axes = plt.gca()
+        axes.set_ybound(lower=-4, upper=4)
+        plt.legend()
+        plt.xlabel("time (yr)")
+        plt.ylabel("angle of periapsis (rad)")
         plt.show()
 
     def plot_resonance_ratio(self, targets):
         target_1 = targets[0]
         target_2 = targets[1]
 
-        semi_major_1 = np.array([snapshot[target_1].calculate_semi_major() for snapshot in self.saves])
-        semi_major_2 = np.array([snapshot[target_2].calculate_semi_major() for snapshot in self.saves])
+        semi_major_1 = np.array([snapshot[target_1].calculate_semi_major() for snapshot in self.point_mass_objects_saves])
+        semi_major_2 = np.array([snapshot[target_2].calculate_semi_major() for snapshot in self.point_mass_objects_saves])
 
         plt.plot((semi_major_2 / semi_major_1) ** (3 / 2))
         axes = plt.gca()
         axes.set_ybound(lower=0)
+        plt.xlabel("time (yr)")
+        plt.ylabel("$\mathregular{P_2}/\mathregular{P_1}$")
         plt.show()
 
     def plot_semi_major(self, targets=None):
@@ -213,7 +245,7 @@ class ModelSaves:
 
         max_semi_major = 0
         for i in targets:
-            semi_majors = [snapshot[i].calculate_semi_major() for snapshot in self.point_mass_objects_saves]
+            semi_majors = [snapshot[i].calculate_semi_major()/AU for snapshot in self.point_mass_objects_saves]
             max_semi_major_i = max(semi_majors)
             if max_semi_major_i > max_semi_major:
                 max_semi_major = max_semi_major_i
@@ -222,6 +254,8 @@ class ModelSaves:
         axes = plt.gca()
         axes.set_ybound(lower=0, upper=1.3 * max_semi_major)
         plt.legend()
+        plt.xlabel("time (yr)")
+        plt.ylabel("semi-major (AU)")
         plt.show()
 
     def plot_eccentricities(self, targets=None):
@@ -237,7 +271,9 @@ class ModelSaves:
             plt.plot(self.time_value_saves, eccentricities, marker='o', label='planet ' + str(i))
 
         axes = plt.gca()
-        axes.set_ybound(lower=0, upper=1.3 * max_eccentricity)
+        axes.set_ybound(lower=-0.1, upper=1.1)
+        plt.xlabel("time (yr)")
+        plt.ylabel("eccentricity")
         plt.legend()
         plt.show()
 
@@ -269,21 +305,22 @@ class PointMass:
         return - G_TIMES_MASS_SUN / position_norm + velocity_norm * velocity_norm / 2
 
     def calculate_angular_momentum_density(self):
-        return np.cross(self.velocity, self.position)
+        return np.cross(self.position, self.velocity)
+
+    def eccentricity_vector(self):
+        h = self.calculate_angular_momentum_density()
+        abs_r = np.linalg.norm(self.position)
+        return h * np.matmul(rotation_matrix(-np.pi / 2), self.velocity) \
+               / (G_TIMES_MASS_SUN) - self.position / abs_r
 
     def calculate_semi_major(self):
         return -G_TIMES_MASS_SUN / (2 * self.calculate_energy_density())
 
     def calculate_eccentricity(self):
-        l = self.calculate_angular_momentum_density()
-        l_squared = np.dot(l, l)
-        a = self.calculate_semi_major()
-        return np.sqrt(1 - l_squared / (G_TIMES_MASS_SUN * a))
+        return np.linalg.norm(self.eccentricity_vector())
 
-    def calculate_pi(self):
-        abs_r = np.linalg.norm(self.position)
-        eccentricity_vector = ( (np.dot(self.velocity, self.velocity) - G_TIMES_MASS_SUN / abs_r) * self.position
-                               - np.dot(self.position, self.velocity) * self.velocity ) / G_TIMES_MASS_SUN
+    def calculate_varpi(self):
+        eccentricity_vector = self.eccentricity_vector()
         return math.atan2(eccentricity_vector[1], eccentricity_vector[0])
 
 
@@ -309,11 +346,15 @@ def build_resonance_chain(resonances, eccentricities=None, angles=None, distance
     return objects
 
 
-def main():
-    dt = 1e6
-    N = 10 ** 8
+def rotation_matrix(angle):
+    return np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
 
-    objects = build_resonance_chain([2.], masses=[MASS_JUPITER, MASS_SATURN], eccentricities=[0,0])
+
+def main():
+    dt = 1e7
+    N = 10 ** 7
+
+    objects = build_resonance_chain([2.0], eccentricities=[0,0])
 
     model = GravityModel(objects)
 
@@ -324,9 +365,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-# test for resonance 2 particles
-# e = 0.
-# meet_angle = 2*np.pi * 0
-# distance = distance_jupiter
-# objects = build_resonance_chain([2], eccentricities=[e, 0], angles=[0, meet_angle / 2], distance=distance)
