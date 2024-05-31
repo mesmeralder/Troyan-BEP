@@ -352,9 +352,9 @@ def rotation_matrix(angle):
 
 def main():
     dt = 1e7
-    N = 10 ** 7
+    N = 10 ** 6
 
-    objects = build_resonance_chain([2.0], eccentricities=[0,0])
+    objects = build_resonance_chain([2.0], eccentricities=[0.3,0])
 
     model = GravityModel(objects)
 
