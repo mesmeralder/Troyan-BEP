@@ -6,6 +6,7 @@ from matplotlib.widgets import Slider
 import copy
 import pickle
 import math
+import time
 
 matplotlib.use('QtAgg')
 
@@ -30,75 +31,76 @@ SECONDS_IN_YEAR = 3.15e7
 
 
 class GravityModel:
-    def __init__(self, objects):
-        if isinstance(objects, list):
-            self.point_mass_objects = objects
-        elif isinstance(objects, PointMass):
-            self.point_mass_objects = [objects]
+    def __init__(self, mass_bodies):
+        if isinstance(mass_bodies, list):
+            self.mass_bodies = mass_bodies
+        elif isinstance(mass_bodies, PointMass):
+            self.mass_bodies = [mass_bodies]
         else:
-            raise Exception("Objects invalid type")
+            raise Exception("Bodies invalid type")
 
         self.t = 0
-        self.initialised = False
+        self.saves = []
 
-    def __str__(self):
-        return '\n'.join([str(i) for i in self.point_mass_objects])
-
-    def position_state(self):
-        plt.figure()
-        M = len(self.point_mass_objects)
-        scatters = np.zeros((M, 2))
-        for i, object in enumerate(self.point_mass_objects):
-            scatters[i] = object.position
-        plt.scatter(scatters[:, 0], scatters[:, 1])
-        plt.show()
-
-    def initialise(self):
+        #calculate Sun
         r_cm = np.array([0., 0.])
         v_cm = np.array([0., 0.])
-        for object in self.point_mass_objects:
-            r_cm += object.mass * object.position
-            v_cm += object.mass * object.velocity
+        for mass_body in self.mass_bodies:
+            r_cm += mass_body.mass * mass_body.position
+            v_cm += mass_body.mass * mass_body.velocity
 
-        self.point_mass_objects.insert(0, PointMass(-r_cm / MASS_SUN, -v_cm / MASS_SUN, MASS_SUN))
+        self.mass_bodies.insert(0, PointMass(-r_cm / MASS_SUN, -v_cm / MASS_SUN, MASS_SUN))
 
-        forces = np.zeros((len(self.point_mass_objects), 2))
-        for (i, j) in combinations(range(len(self.point_mass_objects)), 2):
-            object_main = self.point_mass_objects[i]
-            object_other = self.point_mass_objects[j]
-            force = object_main.gravity(object_other)
-            forces[i] += force
-            forces[j] -= force
+        #initialise position and velocity vectors
+        self.n_bodies = len(self.mass_bodies)
+        self.mass_body_positions = np.zeros([self.n_bodies, 2])
+        self.mass_body_velocities = np.zeros([self.n_bodies, 2])
+        for i, body in enumerate(mass_bodies):
+            self.mass_body_positions[i] = body.position
+            self.mass_body_velocities[i] = body.velocity
 
-        for i in range(len(self.point_mass_objects)):
-            mass_object = self.point_mass_objects[i]
-            self.point_mass_objects[i].acceleration = forces[i] / mass_object.mass
+        #initialise G m_i m_j matrix for gravity calculations
+        mass_vector = np.array([mass_body.mass for mass_body in self.mass_bodies])
+        self.gravity_interaction_constant = G * np.tensordot(np.ones(self.n_bodies), mass_vector, axes=0)
+
+        #initialise accelaration for leapfrog
+        infinite_diagonal = np.zeros((self.n_bodies, self.n_bodies))
+        np.fill_diagonal(infinite_diagonal, math.inf)
+        self.infinite_diagonal = infinite_diagonal #need this later with gravity calculations
+        self.mass_body_accelerations = self.get_acceleration()
+
+    def get_acceleration(self):
+        r_duplications = np.tensordot(np.ones(self.n_bodies), self.mass_body_positions, axes=0)
+        delta_r_matrix = r_duplications - np.swapaxes(r_duplications, 0, 1)
+        delta_r_matrix_to_the_minus_3 = (delta_r_matrix[:, :, 0] ** 2 + delta_r_matrix[:, :,
+                                                                     1] ** 2 + self.infinite_diagonal) ** (-3 / 2)
+        return np.einsum('i,jik', np.ones(self.n_bodies),
+                  np.tensordot(self.gravity_interaction_constant * delta_r_matrix_to_the_minus_3,
+                               np.ones(2), axes=0) * delta_r_matrix)
 
     def time_update(self, dt):
-        for mass_object in self.point_mass_objects:
-            mass_object.position += mass_object.velocity * dt + 1 / 2 * mass_object.acceleration * dt ** 2
-
-        # calculate forces brute force
-        forces = np.zeros((len(self.point_mass_objects), 2))
-        for (i, j) in combinations(range(len(self.point_mass_objects)), 2):
-            object_main = self.point_mass_objects[i]
-            object_other = self.point_mass_objects[j]
-            force = object_main.gravity(object_other)
-            forces[i] += force
-            forces[j] -= force
+        self.mass_body_positions += self.mass_body_velocities * dt + 1 / 2 * self.mass_body_accelerations * dt ** 2
 
         # leapfrog update x and v
-        for i in range(len(self.point_mass_objects)):
-            mass_object = self.point_mass_objects[i]
-            acceleration = forces[i] / mass_object.mass
-            mass_object.velocity += 1 / 2 * (mass_object.acceleration + acceleration) * dt
-            mass_object.acceleration = acceleration
+        accelerations = self.get_acceleration()
+
+        self.mass_body_velocities += 1 / 2 * (accelerations + self.mass_body_accelerations) * dt
+        self.mass_body_accelerations = accelerations
 
         self.t += dt
 
+    def save(self):
+        bodies_for_save = [0] * self.n_bodies
+        for i, body in enumerate(self.mass_bodies):
+            body.position = self.mass_body_positions[i]
+            body.velocity = self.mass_body_velocities[i]
+            bodies_for_save[i] = copy.deepcopy(body)
+        self.saves += [(self.t / SECONDS_IN_YEAR, bodies_for_save)]
+
     def run(self, dt, number_of_iterations, number_of_saves=0):
-        if not self.initialised:
-            self.initialise()
+        print("Starting simulation with " + str(self.n_bodies) + 'objects, dt=' + str(dt) + "and "
+              + str(number_of_iterations) + "iterations")
+        start = time.time()
 
         checkpoints = [i * number_of_iterations / 10 for i in range(10)]  # for progress bar
 
@@ -112,21 +114,16 @@ class GravityModel:
         if number_of_saves > 0:
             iterations_per_save = number_of_iterations // number_of_saves
 
-            saves = [[dt / SECONDS_IN_YEAR * n * iterations_per_save, []] for n in range(number_of_saves + 1)]
-
             for i in range(number_of_iterations):
                 if i in checkpoints:  # progress bar
                     print(str(checkpoints.index(i) * 10) + '% completed')
 
                 if i % iterations_per_save == 0:
-                    saves[i // iterations_per_save][1] = copy.deepcopy(self.point_mass_objects)
+                    self.save()
 
                 self.time_update(dt)
-
-            saves[number_of_saves][1] = copy.deepcopy(self.point_mass_objects)
-
-        if 'saves' in locals():
-            return ModelSaves(saves)
+        end = time.time()
+        print('Took ' + str(end - start) + ' s')
 
 
 class ModelSaves:
@@ -164,13 +161,13 @@ class ModelSaves:
             for mass_object in self.point_mass_objects_saves[int(s_t.val)]:
                 a = mass_object.calculate_semi_major()
                 e = mass_object.calculate_eccentricity()
-                pi = mass_object.calculate_pi()
+                varpi = mass_object.calculate_varpi()
                 b = a * np.sqrt(1 - e*e)
 
                 kakudo = np.linspace(0, 2*np.pi, 100)
 
-                x_ellipse = [np.cos(pi) * (a * np.cos(angle) - a * e) - np.sin(pi) * b * np.sin(angle) for angle in kakudo]
-                y_ellipse = [np.sin(pi) * (a * np.cos(angle) - a * e) + np.cos(pi) * b * np.sin(angle) for angle in kakudo]
+                x_ellipse = [np.cos(varpi) * (a * np.cos(angle) - a * e) - np.sin(varpi) * b * np.sin(angle) for angle in kakudo]
+                y_ellipse = [np.sin(varpi) * (a * np.cos(angle) - a * e) + np.cos(varpi) * b * np.sin(angle) for angle in kakudo]
 
                 fax.plot(x_ellipse, y_ellipse)
                 fax.scatter(mass_object.position[0], mass_object.position[1])
@@ -351,16 +348,14 @@ def rotation_matrix(angle):
 
 
 def main():
-    dt = 1e7
-    N = 10 ** 6
+    dt = 1e6
+    N = 10 ** 4
 
-    objects = build_resonance_chain([2.0], eccentricities=[0.3,0])
+    objects = build_resonance_chain([2.0], eccentricities=[0.3,0], angles=[0,0])
 
     model = GravityModel(objects)
 
-    saves = model.run(dt, N, 100)
-
-    saves.save_object('Test')
+    model.run(dt, N, 1)
 
 
 if __name__ == "__main__":
