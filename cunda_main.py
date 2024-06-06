@@ -61,8 +61,8 @@ class GravityModel:
             self.mass_body_velocities[i] = body.velocity
 
         #initialise G m_i m_j matrix for gravity calculations
-        mass_vector = np.array([mass_body.mass for mass_body in self.mass_bodies])
-        self.gravity_interaction_constant = G * np.tensordot(np.ones(self.n_bodies), mass_vector, axes=0)
+        self.mass_vector = np.array([mass_body.mass for mass_body in self.mass_bodies])
+        self.gravity_interaction_constant = G * np.tensordot(np.ones(self.n_bodies), self.mass_vector, axes=0)
 
         #initialise accelaration for leapfrog
         infinite_diagonal = np.zeros((self.n_bodies, self.n_bodies))
@@ -340,6 +340,28 @@ def rotation_matrix(angle):
     return np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
 
 
+
+@jit
+def run_cunda(mass_array, position_array, velocity_array, acceleration_array, dt=1e6, number_of_iterations=10**6):
+    n_bodies = len(mass_array)
+    gravity_interaction_constant = G * mass_array[np.newaxis, :]
+    infinite_diagonal = np.zeros((n_bodies, n_bodies))
+    np.fill_diagonal(infinite_diagonal, math.inf)
+
+    for i in range(number_of_iterations):
+        position_array += velocity_array * dt + .5 * acceleration_array * dt ** 2
+
+        # leapfrog update x and v
+        delta_r_matrix = position_array[np.newaxis, :] - position_array[:, np.newaxis]
+        delta_r_matrix_to_the_minus_3 = (delta_r_matrix[:, :, 0] ** 2 +
+                                         delta_r_matrix[:, :, 1] ** 2 + infinite_diagonal) ** (-1.5)
+        accelerations = np.sum((gravity_interaction_constant * delta_r_matrix_to_the_minus_3)[:, :, np.newaxis]
+                         * delta_r_matrix, 0)
+
+        velocity_array += .5 * (accelerations + acceleration_array) * dt
+        acceleration_array = accelerations
+
+
 def main():
     dt = 1e6
     n = 10 ** 6
@@ -348,10 +370,8 @@ def main():
     objects = build_resonance_chain([2.0], eccentricities=[0.3, 0], angles=[0, 0])
     model = GravityModel(objects)
 
-    model.run(dt, n, saves)
-
-    saves = ModelSaves(model.saves)
-    saves.store_saves("Test")
+    run_cunda(model.mass_vector, model.mass_body_positions, model.mass_body_velocities,
+              model.mass_body_accelerations, dt, n)
 
 
 if __name__ == "__main__":
