@@ -67,24 +67,24 @@ class GravityModel:
         infinite_diagonal = np.zeros((self.n_bodies, self.n_bodies))
         np.fill_diagonal(infinite_diagonal, math.inf)
         self.infinite_diagonal = infinite_diagonal #need this later with gravity calculations
+        self.ones = np.ones(self.n_bodies)
         self.mass_body_accelerations = self.get_acceleration()
 
     def get_acceleration(self):
-        r_duplications = np.tensordot(np.ones(self.n_bodies), self.mass_body_positions, axes=0)
-        delta_r_matrix = r_duplications - np.swapaxes(r_duplications, 0, 1)
-        delta_r_matrix_to_the_minus_3 = (delta_r_matrix[:, :, 0] ** 2 + delta_r_matrix[:, :,
-                                                                     1] ** 2 + self.infinite_diagonal) ** (-3 / 2)
-        return np.einsum('i,jik', np.ones(self.n_bodies),
-                  np.tensordot(self.gravity_interaction_constant * delta_r_matrix_to_the_minus_3,
-                               np.ones(2), axes=0) * delta_r_matrix)
+        delta_r_matrix = self.mass_body_positions[np.newaxis, :] - self.mass_body_positions[:, np.newaxis]
+        delta_r_matrix_to_the_minus_3 = (delta_r_matrix[:, :, 0] ** 2 +
+                                         delta_r_matrix[:, :, 1] ** 2 + self.infinite_diagonal) ** (-1.5)
+        return np.einsum('i,jik', self.ones,
+                         (self.gravity_interaction_constant * delta_r_matrix_to_the_minus_3)[:, :, np.newaxis]
+                         * delta_r_matrix)
 
     def time_update(self, dt):
-        self.mass_body_positions += self.mass_body_velocities * dt + 1 / 2 * self.mass_body_accelerations * dt ** 2
+        self.mass_body_positions += self.mass_body_velocities * dt + .5 * self.mass_body_accelerations * dt ** 2
 
         # leapfrog update x and v
         accelerations = self.get_acceleration()
 
-        self.mass_body_velocities += 1 / 2 * (accelerations + self.mass_body_accelerations) * dt
+        self.mass_body_velocities += .5 * (accelerations + self.mass_body_accelerations) * dt
         self.mass_body_accelerations = accelerations
 
         self.t += dt
@@ -98,32 +98,24 @@ class GravityModel:
         self.saves += [(self.t / SECONDS_IN_YEAR, bodies_for_save)]
 
     def run(self, dt, number_of_iterations, number_of_saves=0):
-        print("Starting simulation with " + str(self.n_bodies) + 'objects, dt=' + str(dt) + "and "
-              + str(number_of_iterations) + "iterations")
+        print("Starting simulation with " + str(self.n_bodies) + ' bodies, dt=' + str(dt) + "s and "
+              + str(number_of_iterations) + " iterations")
         start = time.time()
 
-        checkpoints = [i * number_of_iterations / 10 for i in range(10)]  # for progress bar
-
         if number_of_saves == 0:
-            for i in range(number_of_iterations):
-                if i in checkpoints:  # progress bar
-                    print(str(checkpoints.index(i) * 10) + '% completed')
-
-                self.time_update(dt)
-
-        if number_of_saves > 0:
+            save_list = [False] * number_of_iterations
+        elif number_of_saves > 0:
             iterations_per_save = number_of_iterations // number_of_saves
+            save_list = ([True] + [False]*(iterations_per_save-1))*number_of_saves + [True]
 
-            for i in range(number_of_iterations):
-                if i in checkpoints:  # progress bar
-                    print(str(checkpoints.index(i) * 10) + '% completed')
+        for save_value in save_list:
+            if save_value:
+                self.save()
 
-                if i % iterations_per_save == 0:
-                    self.save()
+            self.time_update(dt)
 
-                self.time_update(dt)
         end = time.time()
-        print('Took ' + str(end - start) + ' s')
+        return end-start
 
 
 class ModelSaves:
@@ -349,13 +341,13 @@ def rotation_matrix(angle):
 
 def main():
     dt = 1e6
-    N = 10 ** 4
+    n = 10 ** 2
+    saves = 10 ** 2
 
-    objects = build_resonance_chain([2.0], eccentricities=[0.3,0], angles=[0,0])
-
+    objects = build_resonance_chain([2.0], eccentricities=[0.3, 0], angles=[0, 0])
     model = GravityModel(objects)
 
-    model.run(dt, N, 1)
+    model.run(dt, n, saves)
 
 
 if __name__ == "__main__":
