@@ -124,7 +124,7 @@ class ModelSaves:
         self.time_value_saves = [snapshot[0] for snapshot in self.saves]
         self.point_mass_objects_saves = [snapshot[1] for snapshot in self.saves]
 
-    def save_object(self, filename):
+    def store_saves(self, filename):
         with open(filename, 'wb') as outp:
             pickle.dump(self, outp, pickle.HIGHEST_PROTOCOL)
 
@@ -341,7 +341,7 @@ def rotation_matrix(angle):
 
 def main():
     dt = 1e6
-    n = 10 ** 2
+    n = 10 ** 6
     saves = 10 ** 2
 
     objects = build_resonance_chain([2.0], eccentricities=[0.3, 0], angles=[0, 0])
@@ -349,6 +349,8 @@ def main():
 
     model.run(dt, n, saves)
 
+    saves = ModelSaves(model.saves)
+    saves.store_saves("Test")
 
 if __name__ == "__main__":
     main()
