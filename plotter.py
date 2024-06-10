@@ -1,7 +1,7 @@
 from main import *
 
-with open('Test', 'rb') as f:
+with open('saves/Test', 'rb') as f:
     save = pickle.load(f)
 
-save.plot_semi_major()
-save.show_states()
+save.plot_semi_majors()
+save.plot_total_energy()

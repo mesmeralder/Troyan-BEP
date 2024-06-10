@@ -6,6 +6,8 @@ import copy
 import pickle
 import math
 import time
+import itertools
+
 
 matplotlib.use('QtAgg')
 
@@ -138,13 +140,7 @@ class ModelSaves:
 
         s_t = Slider(ax=sax, label='data number', valmin=0, valmax=len(self.saves) - 1, valinit=0)
 
-        x_values = np.array([[object.position[0] for object in snapshot] for snapshot in self.point_mass_objects_saves]).flatten()
-        y_values = np.array([[object.position[1] for object in snapshot] for snapshot in self.point_mass_objects_saves]).flatten()
-        minx = np.min(x_values)
-        maxx = np.max(x_values)
-        miny = np.min(y_values)
-        maxy = np.max(y_values)
-        maxval = max(abs(maxx), abs(maxy), abs(minx), abs(miny))
+        maxval = 30 * AU
 
         def update(val):
             fax.cla()
@@ -198,7 +194,7 @@ class ModelSaves:
         plt.ylabel("distance (m)")
         plt.show()
 
-    def plot_varpi(self, targets=None):
+    def plot_varpis(self, targets=None):
         if targets is None:
             targets = range(1, len(self.point_mass_objects_saves[0]))
 
@@ -227,7 +223,7 @@ class ModelSaves:
         plt.ylabel("$\mathregular{P_2}/\mathregular{P_1}$")
         plt.show()
 
-    def plot_semi_major(self, targets=None):
+    def plot_semi_majors(self, targets=None):
         if targets is None:
             targets = range(1, len(self.point_mass_objects_saves[0]))
 
@@ -264,6 +260,33 @@ class ModelSaves:
         plt.ylabel("eccentricity")
         plt.legend()
         plt.show()
+
+    def plot_total_energy(self):
+        number_of_saves = len(self.saves)
+        energy_without_sun = np.zeros(number_of_saves)
+        energy_with_sun = np.zeros(number_of_saves)
+        for i, snapshot in enumerate(self.point_mass_objects_saves):
+            energy = 0
+            for body in snapshot[1:]:
+                energy += 1/2 * body.mass * np.dot(body.velocity, body.velocity)
+
+            for body1, body2 in itertools.combinations(snapshot, 2):
+                r = np.linalg.norm(body1.position - body2.position)
+                energy -= G * body1.mass * body2.mass / r
+
+            energy_without_sun[i] = energy
+            energy_with_sun[i] = energy + 1/2 * snapshot[0].mass * np.dot(snapshot[0].velocity, snapshot[0].velocity)
+
+        plt.plot(self.time_value_saves, energy_without_sun, marker='o', label="energy without Sun")
+        plt.plot(self.time_value_saves, energy_with_sun, marker='o', label="energy with Sun")
+
+        axes = plt.gca()
+        plt.xlabel("time (yr)")
+        plt.ylabel("energy (J)")
+        plt.legend()
+        plt.show()
+
+
 
 
 class PointMass:

@@ -126,7 +126,7 @@ class ModelSaves:
         self.point_mass_objects_saves = [snapshot[1] for snapshot in self.saves]
 
     def store_saves(self, filename):
-        with open(filename, 'wb') as outp:
+        with open("saves/" + filename, 'wb') as outp:
             pickle.dump(self, outp, pickle.HIGHEST_PROTOCOL)
 
     def show_states(self):
@@ -314,15 +314,23 @@ class PointMass:
         return math.atan2(eccentricity_vector[1], eccentricity_vector[0])
 
 
-def build_resonance_chain(resonances, eccentricities=None, angles=None, distance=DISTANCE_JUPITER, masses=None):
+def build_resonance_chain(resonances, eccentricities=None, angles=None, distance=DISTANCE_JUPITER, masses=None, random=False):
     N = len(resonances)
 
-    if eccentricities == None:
-        eccentricities = np.random.uniform(0., .1, size=(N + 1))
-    if angles == None:
-        angles = np.random.uniform(0., 2 * np.pi, size=(N + 1))
-    if masses == None:
-        masses = np.ones(N + 1) * MASS_JUPITER
+    if random:
+        if eccentricities == None:
+            eccentricities = np.random.uniform(0., .1, size=(N + 1))
+        if angles == None:
+            angles = np.random.uniform(0., 2 * np.pi, size=(N + 1))
+        if masses == None:
+            masses = np.ones(N + 1) * MASS_JUPITER
+    else:
+        if eccentricities == None:
+            eccentricities = np.zeros(N + 1)
+        if angles == None:
+            angles = np.zeros(N + 1)
+        if masses == None:
+            masses = np.ones(N + 1) * MASS_JUPITER
 
     if not (N + 1 == len(eccentricities) and N + 1 == len(angles)) and N + 1 == len(masses):
         raise Exception("Lengths don't match up")
@@ -340,14 +348,29 @@ def rotation_matrix(angle):
     return np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
 
 
+def cunda_loop(model, dt=1e6, number_of_iterations=10**6, number_of_saves=0):
+    if number_of_saves == 0:
+        model.mass_body_positions, model.mass_body_velocities, model.mass_body_accelerations = (
+            run_cunda(model.mass_body_positions, model.mass_body_velocities, model.mass_body_accelerations,
+                  model.gravity_interaction_constant, model.infinite_diagonal,
+                  dt, number_of_iterations))
+        model.t += dt * number_of_iterations
+
+    if number_of_saves > 0:
+        iterations_per_save = number_of_iterations // number_of_saves
+
+        model.save()
+        for i in range(number_of_saves):
+            model.mass_body_positions, model.mass_body_velocities, model.mass_body_accelerations = (
+                run_cunda(model.mass_body_positions, model.mass_body_velocities,model.mass_body_accelerations,
+                          model.gravity_interaction_constant, model.infinite_diagonal,
+                          dt, iterations_per_save))
+            model.t += dt*iterations_per_save
+            model.save()
 
 @jit
-def run_cunda(mass_array, position_array, velocity_array, acceleration_array, dt=1e6, number_of_iterations=10**6):
-    n_bodies = len(mass_array)
-    gravity_interaction_constant = G * mass_array[np.newaxis, :]
-    infinite_diagonal = np.zeros((n_bodies, n_bodies))
-    np.fill_diagonal(infinite_diagonal, math.inf)
-
+def run_cunda(position_array, velocity_array, acceleration_array, gravity_interaction_constant,
+              infinite_diagonal, dt=1e6, number_of_iterations=10**6):
     for i in range(number_of_iterations):
         position_array += velocity_array * dt + .5 * acceleration_array * dt ** 2
 
@@ -356,22 +379,35 @@ def run_cunda(mass_array, position_array, velocity_array, acceleration_array, dt
         delta_r_matrix_to_the_minus_3 = (delta_r_matrix[:, :, 0] ** 2 +
                                          delta_r_matrix[:, :, 1] ** 2 + infinite_diagonal) ** (-1.5)
         accelerations = np.sum((gravity_interaction_constant * delta_r_matrix_to_the_minus_3)[:, :, np.newaxis]
-                         * delta_r_matrix, 0)
+                         * delta_r_matrix, 1)
 
         velocity_array += .5 * (accelerations + acceleration_array) * dt
         acceleration_array = accelerations
+    return position_array, velocity_array, acceleration_array
 
+
+def nice_model_objects():
+    jupiter = PointMass.orbit(5.45 * AU, MASS_JUPITER)
+    saturn = PointMass.orbit(8.65 * AU, MASS_SATURN)
+    neptune_radius = np.random.uniform(11, 13)
+    uranus = PointMass.orbit(neptune_radius * AU, MASS_NEPTUNE)
+    uranus_radius = np.random.uniform(max(neptune_radius + 2, 13.5), 17)
+    neptune = PointMass.orbit(uranus_radius * AU, MASS_URANUS)
+    return [jupiter, saturn, uranus, neptune]
 
 def main():
-    dt = 1e6
-    n = 10 ** 6
-    saves = 10 ** 2
+    dt = 1e5
+    T = 2 * 1e6 #years
+    number_of_iterations = int(T * SECONDS_IN_YEAR / dt)
+    number_of_saves = 10**3
 
-    objects = build_resonance_chain([2.0], eccentricities=[0.3, 0], angles=[0, 0])
+    objects = nice_model_objects()
     model = GravityModel(objects)
 
-    run_cunda(model.mass_vector, model.mass_body_positions, model.mass_body_velocities,
-              model.mass_body_accelerations, dt, n)
+    cunda_loop(model, dt, number_of_iterations, number_of_saves)
+
+    saves = ModelSaves(model.saves)
+    saves.store_saves("Test")
 
 
 if __name__ == "__main__":
