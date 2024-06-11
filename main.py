@@ -242,6 +242,37 @@ class ModelSaves:
         plt.ylabel("semi-major (AU)")
         plt.show()
 
+    def plot_distances(self, targets=None):
+        if targets is None:
+            targets = range(1, len(self.point_mass_objects_saves[0]))
+
+        plt.figure()
+        plt.clf()
+        ax=plt.gca()
+
+        for i in targets:
+            semi_majors = [snapshot[i].calculate_semi_major()/AU for snapshot in self.point_mass_objects_saves]
+            min_distance = [snapshot[i].calculate_semi_major() * (1 - snapshot[i].calculate_eccentricity())/AU for
+                            snapshot in self.point_mass_objects_saves]
+            max_distance = [snapshot[i].calculate_semi_major() * (1 + snapshot[i].calculate_eccentricity()) / AU for
+                            snapshot in self.point_mass_objects_saves]
+
+            color = next(ax._get_lines.prop_cycler)['color']
+            for list_to_plot in [semi_majors, min_distance, max_distance]:
+                if list_to_plot == semi_majors:
+                    plt.plot(self.time_value_saves, list_to_plot, marker='o', label='planet ' + str(i), color=color,
+                             markersize=.5)
+                else:
+                    plt.plot(self.time_value_saves, list_to_plot, marker='o', color=color,
+                             markersize=.5)
+
+        ax = plt.gca()
+        ax.set_ybound(lower=0, upper=30)
+        plt.legend()
+        plt.xlabel("time (yr)")
+        plt.ylabel("$a/q/Q$ (AU)")
+        plt.show()
+
     def plot_eccentricities(self, targets=None):
         if targets is None:
             targets = range(1, len(self.point_mass_objects_saves[0]))
@@ -281,6 +312,7 @@ class ModelSaves:
         plt.plot(self.time_value_saves, energy_with_sun, marker='o', label="energy with Sun")
 
         axes = plt.gca()
+        axes.set_ybound(upper = 0)
         plt.xlabel("time (yr)")
         plt.ylabel("energy (J)")
         plt.legend()

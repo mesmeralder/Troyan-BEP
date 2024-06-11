@@ -1,7 +1,8 @@
 from main import *
 
-with open('saves/Test', 'rb') as f:
-    save = pickle.load(f)
 
-save.plot_semi_majors()
-save.plot_total_energy()
+for i in range(10):
+    with open('saves/Density_test_2_' + str(i), 'rb') as f:
+        save = pickle.load(f)
+
+    save.plot_distances()

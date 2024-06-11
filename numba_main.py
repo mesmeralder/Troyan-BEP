@@ -28,6 +28,10 @@ MASS_NEPTUNE = 1.024e26  # kg
 
 MASS_URANUS = 8.681e25  # kg
 
+M_EARTH = 5.972e24  #k kg
+DISTANCE_NEPTUNE = 4.4925e9  # km
+SIGMA = M_EARTH * 10**-5 / (np.pi * DISTANCE_NEPTUNE ** 2)
+
 SECONDS_IN_YEAR = 3.15e7
 
 
@@ -348,11 +352,11 @@ def rotation_matrix(angle):
     return np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
 
 
-def cunda_loop(model, dt=1e6, number_of_iterations=10**6, number_of_saves=0):
+def numba_loop(model, dt=1e6, number_of_iterations=10**6, number_of_saves=0):
     if number_of_saves == 0:
         model.mass_body_positions, model.mass_body_velocities, model.mass_body_accelerations = (
-            run_cunda(model.mass_body_positions, model.mass_body_velocities, model.mass_body_accelerations,
-                  model.gravity_interaction_constant, model.infinite_diagonal,
+            run_numba(model.mass_body_positions, model.mass_body_velocities, model.mass_body_accelerations,
+                  model.mass_vector, model.gravity_interaction_constant, model.infinite_diagonal,
                   dt, number_of_iterations))
         model.t += dt * number_of_iterations
 
@@ -362,15 +366,17 @@ def cunda_loop(model, dt=1e6, number_of_iterations=10**6, number_of_saves=0):
         model.save()
         for i in range(number_of_saves):
             model.mass_body_positions, model.mass_body_velocities, model.mass_body_accelerations = (
-                run_cunda(model.mass_body_positions, model.mass_body_velocities,model.mass_body_accelerations,
-                          model.gravity_interaction_constant, model.infinite_diagonal,
+                run_numba(model.mass_body_positions, model.mass_body_velocities,model.mass_body_accelerations,
+                          model.mass_vector, model.gravity_interaction_constant, model.infinite_diagonal,
                           dt, iterations_per_save))
             model.t += dt*iterations_per_save
             model.save()
+            print("Saved " + str(i + 1) + "/" + str(number_of_saves))
 
 @jit
-def run_cunda(position_array, velocity_array, acceleration_array, gravity_interaction_constant,
+def run_numba(position_array, velocity_array, acceleration_array, mass_array, gravity_interaction_constant,
               infinite_diagonal, dt=1e6, number_of_iterations=10**6):
+    FRICTION_CONSTANT = (G * SIGMA * (MASS_SUN / mass_array) ** (2/3))[:, np.newaxis]
     for i in range(number_of_iterations):
         position_array += velocity_array * dt + .5 * acceleration_array * dt ** 2
 
@@ -378,8 +384,10 @@ def run_cunda(position_array, velocity_array, acceleration_array, gravity_intera
         delta_r_matrix = position_array[np.newaxis, :] - position_array[:, np.newaxis]
         delta_r_matrix_to_the_minus_3 = (delta_r_matrix[:, :, 0] ** 2 +
                                          delta_r_matrix[:, :, 1] ** 2 + infinite_diagonal) ** (-1.5)
-        accelerations = np.sum((gravity_interaction_constant * delta_r_matrix_to_the_minus_3)[:, :, np.newaxis]
+        gravity_accelerations = np.sum((gravity_interaction_constant * delta_r_matrix_to_the_minus_3)[:, :, np.newaxis]
                          * delta_r_matrix, 1)
+        friction_accelerations = FRICTION_CONSTANT * velocity_array / (np.sqrt(np.sum(velocity_array**2, axis=1))[:, np.newaxis])
+        accelerations = gravity_accelerations - friction_accelerations
 
         velocity_array += .5 * (accelerations + acceleration_array) * dt
         acceleration_array = accelerations
@@ -390,24 +398,29 @@ def nice_model_objects():
     jupiter = PointMass.orbit(5.45 * AU, MASS_JUPITER)
     saturn = PointMass.orbit(8.65 * AU, MASS_SATURN)
     neptune_radius = np.random.uniform(11, 13)
-    uranus = PointMass.orbit(neptune_radius * AU, MASS_NEPTUNE)
+    uranus = PointMass.orbit(neptune_radius * AU, MASS_URANUS)
     uranus_radius = np.random.uniform(max(neptune_radius + 2, 13.5), 17)
-    neptune = PointMass.orbit(uranus_radius * AU, MASS_URANUS)
+    neptune = PointMass.orbit(uranus_radius * AU, MASS_NEPTUNE)
     return [jupiter, saturn, uranus, neptune]
 
+
 def main():
-    dt = 1e5
-    T = 2 * 1e6 #years
-    number_of_iterations = int(T * SECONDS_IN_YEAR / dt)
-    number_of_saves = 10**3
+    dt = 1e6
+    total_time = 1e5  # years
+    number_of_iterations = int(total_time * SECONDS_IN_YEAR / dt)
+    number_of_saves = 10 ** 3
 
-    objects = nice_model_objects()
-    model = GravityModel(objects)
+    for i in range(10):
+        global SIGMA
+        SIGMA = M_EARTH * i * 1e-14 / (np.pi * DISTANCE_NEPTUNE ** 2)
 
-    cunda_loop(model, dt, number_of_iterations, number_of_saves)
+        objects = nice_model_objects()
+        model = GravityModel(objects)
 
-    saves = ModelSaves(model.saves)
-    saves.store_saves("Test")
+        numba_loop(model, dt, number_of_iterations, number_of_saves)
+
+        saves = ModelSaves(model.saves)
+        saves.store_saves("Density_test_2_" + str(i))
 
 
 if __name__ == "__main__":
