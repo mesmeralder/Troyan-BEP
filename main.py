@@ -1,13 +1,13 @@
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
+from itertools import combinations
 from matplotlib.widgets import Slider
 import copy
 import pickle
 import math
 import time
-import itertools
-
+from numba import jit
 
 matplotlib.use('QtAgg')
 
@@ -27,6 +27,10 @@ DISTANCE_SATURN = 1.4507e12  # m
 MASS_NEPTUNE = 1.024e26  # kg
 
 MASS_URANUS = 8.681e25  # kg
+
+M_EARTH = 5.972e24  #k kg
+DISTANCE_NEPTUNE = 4.4925e9  # km
+SIGMA = M_EARTH * 10**-5 / (np.pi * DISTANCE_NEPTUNE ** 2)
 
 SECONDS_IN_YEAR = 3.15e7
 
@@ -61,8 +65,8 @@ class GravityModel:
             self.mass_body_velocities[i] = body.velocity
 
         #initialise G m_i m_j matrix for gravity calculations
-        mass_vector = np.array([mass_body.mass for mass_body in self.mass_bodies])
-        self.gravity_interaction_constant = G * np.tensordot(np.ones(self.n_bodies), mass_vector, axes=0)
+        self.mass_vector = np.array([mass_body.mass for mass_body in self.mass_bodies])
+        self.gravity_interaction_constant = G * np.tensordot(np.ones(self.n_bodies), self.mass_vector, axes=0)
 
         #initialise accelaration for leapfrog
         infinite_diagonal = np.zeros((self.n_bodies, self.n_bodies))
@@ -126,7 +130,7 @@ class ModelSaves:
         self.point_mass_objects_saves = [snapshot[1] for snapshot in self.saves]
 
     def store_saves(self, filename):
-        with open(filename, 'wb') as outp:
+        with open("saves/" + filename, 'wb') as outp:
             pickle.dump(self, outp, pickle.HIGHEST_PROTOCOL)
 
     def show_states(self):
@@ -242,24 +246,27 @@ class ModelSaves:
         plt.ylabel("semi-major (AU)")
         plt.show()
 
-    def plot_distances(self, targets=None):
-        if targets is None:
-            targets = range(1, len(self.point_mass_objects_saves[0]))
-
+    def plot_distances(self):
         plt.figure()
         plt.clf()
         ax=plt.gca()
 
-        for i in targets:
-            semi_majors = [snapshot[i].calculate_semi_major()/AU for snapshot in self.point_mass_objects_saves]
-            min_distance = [snapshot[i].calculate_semi_major() * (1 - snapshot[i].calculate_eccentricity())/AU for
-                            snapshot in self.point_mass_objects_saves]
-            max_distance = [snapshot[i].calculate_semi_major() * (1 + snapshot[i].calculate_eccentricity()) / AU for
-                            snapshot in self.point_mass_objects_saves]
+        n = len(self.time_value_saves)
+        n_initial_planets = len(self.point_mass_objects_saves[0])
+        semi_majors = np.zeros([n_initial_planets, n])
+        max_distance = np.zeros([n_initial_planets, n])
+        min_distance = np.zeros([n_initial_planets, n])
+        for t in range(n):
+            for i, target in enumerate(self.point_mass_objects_saves[t]):
+                print(i)
+                semi_majors[i][t] = target.calculate_semi_major()/AU
+                min_distance[i][t] = target.calculate_semi_major() * (1 - target.calculate_eccentricity())/AU
+                max_distance[i][t] = target.calculate_semi_major() * (1 + target.calculate_eccentricity())/AU
 
+        for i in range(n_initial_planets):
             color = next(ax._get_lines.prop_cycler)['color']
-            for list_to_plot in [semi_majors, min_distance, max_distance]:
-                if list_to_plot == semi_majors:
+            for list_to_plot in [semi_majors[i], min_distance[i], max_distance[i]]:
+                if np.all(list_to_plot == semi_majors[i]):
                     plt.plot(self.time_value_saves, list_to_plot, marker='o', label='planet ' + str(i), color=color,
                              markersize=.5)
                 else:
@@ -320,7 +327,6 @@ class ModelSaves:
 
 
 
-
 class PointMass:
     def __init__(self, position, velocity, mass):
         self.position = position
@@ -367,15 +373,23 @@ class PointMass:
         return math.atan2(eccentricity_vector[1], eccentricity_vector[0])
 
 
-def build_resonance_chain(resonances, eccentricities=None, angles=None, distance=DISTANCE_JUPITER, masses=None):
+def build_resonance_chain(resonances, eccentricities=None, angles=None, distance=DISTANCE_JUPITER, masses=None, random=False):
     N = len(resonances)
 
-    if eccentricities == None:
-        eccentricities = np.random.uniform(0., .1, size=(N + 1))
-    if angles == None:
-        angles = np.random.uniform(0., 2 * np.pi, size=(N + 1))
-    if masses == None:
-        masses = np.ones(N + 1) * MASS_JUPITER
+    if random:
+        if eccentricities == None:
+            eccentricities = np.random.uniform(0., .1, size=(N + 1))
+        if angles == None:
+            angles = np.random.uniform(0., 2 * np.pi, size=(N + 1))
+        if masses == None:
+            masses = np.ones(N + 1) * MASS_JUPITER
+    else:
+        if eccentricities == None:
+            eccentricities = np.zeros(N + 1)
+        if angles == None:
+            angles = np.zeros(N + 1)
+        if masses == None:
+            masses = np.ones(N + 1) * MASS_JUPITER
 
     if not (N + 1 == len(eccentricities) and N + 1 == len(angles)) and N + 1 == len(masses):
         raise Exception("Lengths don't match up")
@@ -393,15 +407,102 @@ def rotation_matrix(angle):
     return np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
 
 
+def numba_loop(model, dt=1e6, number_of_iterations=10**6, number_of_saves=0):
+    if number_of_saves == 0:
+        model.mass_body_positions, model.mass_body_velocities, model.mass_body_accelerations = (
+            run_numba(model.mass_body_positions, model.mass_body_velocities, model.mass_body_accelerations,
+                  model.mass_vector, model.gravity_interaction_constant, model.infinite_diagonal,
+                  dt, number_of_iterations))
+        model.t += dt * number_of_iterations
+
+    if number_of_saves > 0:
+        iterations_per_save = number_of_iterations // number_of_saves
+
+        model.save()
+        for i in range(number_of_saves):
+            model.mass_body_positions, model.mass_body_velocities, model.mass_body_accelerations = (
+                run_numba(model.mass_body_positions, model.mass_body_velocities,model.mass_body_accelerations,
+                          model.mass_vector, model.gravity_interaction_constant, model.infinite_diagonal,
+                          dt, iterations_per_save))
+            model.t += dt*iterations_per_save
+
+            list_of_removals = remove_list(model.mass_body_positions, model.mass_body_velocities)
+            for i in list_of_removals:
+                print(i)
+                model.n_bodies -= 1
+                model.ones = np.ones(model.n_bodies)
+
+                model.mass_body_positions = array_pop(model.mass_body_positions, i)
+                model.mass_body_velocities = array_pop(model.mass_body_velocities, i)
+                model.mass_body_accelerations = array_pop(model.mass_body_accelerations, i)
+                model.mass_vector = array_pop(model.mass_vector, i)
+                model.mass_bodies = array_pop(model.mass_bodies, i)
+
+                model.gravity_interaction_constant = G * np.tensordot(np.ones(model.n_bodies), model.mass_vector, axes=0)
+                infinite_diagonal = np.zeros((model.n_bodies, model.n_bodies))
+                np.fill_diagonal(infinite_diagonal, math.inf)
+                model.infinite_diagonal = infinite_diagonal  # need this later with gravity calculations
+
+            model.save()
+
+            print("Saved " + str(i + 1) + "/" + str(number_of_saves))
+
+def array_pop(array, i):
+    list_to_pop = list(array)
+    list_to_pop.pop(i)
+    return np.array(list_to_pop)
+
+@jit
+def remove_list(position_array, velocity_array):
+    energy_condition = (.5 * np.sum(velocity_array * velocity_array, axis=1) -
+                  G_TIMES_MASS_SUN / np.sqrt(np.sum(position_array * position_array, axis=1)) >= 0)
+    return np.where(energy_condition)[0]
+
+
+
+@jit
+def run_numba(position_array, velocity_array, acceleration_array, mass_array, gravity_interaction_constant,
+              infinite_diagonal, dt=1e6, number_of_iterations=10**6):
+    FRICTION_CONSTANT = (G * SIGMA * (MASS_SUN / mass_array) ** (2/3))[:, np.newaxis]
+    for i in range(number_of_iterations):
+        position_array += velocity_array * dt + .5 * acceleration_array * dt ** 2
+
+        # leapfrog update x and v
+        delta_r_matrix = position_array[np.newaxis, :] - position_array[:, np.newaxis]
+        delta_r_matrix_to_the_minus_3 = (delta_r_matrix[:, :, 0] ** 2 +
+                                         delta_r_matrix[:, :, 1] ** 2 + infinite_diagonal) ** (-1.5)
+        gravity_accelerations = np.sum((gravity_interaction_constant * delta_r_matrix_to_the_minus_3)[:, :, np.newaxis]
+                         * delta_r_matrix, 1)
+        accelerations = gravity_accelerations
+
+        velocity_array += .5 * (accelerations + acceleration_array) * dt
+        acceleration_array = accelerations
+    return position_array, velocity_array, acceleration_array
+
+
+def nice_model_objects():
+    jupiter = PointMass.orbit(5.45 * AU, MASS_JUPITER)
+    saturn = PointMass.orbit(8.65 * AU, MASS_SATURN)
+    neptune_radius = np.random.uniform(11, 13)
+    uranus = PointMass.orbit(neptune_radius * AU, MASS_URANUS)
+    uranus_radius = np.random.uniform(max(neptune_radius + 2, 13.5), 17)
+    neptune = PointMass.orbit(uranus_radius * AU, MASS_NEPTUNE)
+    return [jupiter, saturn, uranus, neptune]
+
+
 def main():
     dt = 1e6
-    n = 10 ** 6
-    saves = 10 ** 2
+    total_time = 2e6  # years
+    number_of_iterations = int(total_time * SECONDS_IN_YEAR / dt)
+    number_of_saves = 10 ** 3
 
-    objects = build_resonance_chain([2.0], eccentricities=[0.3, 0], angles=[0, 0])
+    global SIGMA
+    SIGMA = M_EARTH / (np.pi * DISTANCE_NEPTUNE ** 2)
+
+    objects = nice_model_objects()
     model = GravityModel(objects)
 
-    model.run(dt, n, saves)
+    numba_loop(model, dt, number_of_iterations, number_of_saves)
 
     saves = ModelSaves(model.saves)
     saves.store_saves("Test")

@@ -1,4 +1,5 @@
 import numpy as np
 
-k = np.ones(5)
-print(5/k**(3/2))
+k = np.random.random([5])
+wheres = np.where(k < 0.2)
+print(wheres[0])
