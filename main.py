@@ -1,13 +1,13 @@
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
-from itertools import combinations
 from matplotlib.widgets import Slider
 import copy
 import pickle
 import math
 import time
 from numba import jit
+import itertools
 
 matplotlib.use('QtAgg')
 
