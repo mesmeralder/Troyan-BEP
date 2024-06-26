@@ -74,6 +74,7 @@ class GravityModel:
         self.infinite_diagonal = infinite_diagonal #need this later with gravity calculations
         self.ones = np.ones(self.n_bodies)
         self.mass_body_accelerations = self.get_acceleration()
+        print(self.mass_body_accelerations)
 
     def get_acceleration(self):
         delta_r_matrix = self.mass_body_positions[np.newaxis, :] - self.mass_body_positions[:, np.newaxis]
