@@ -2,6 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import math
 import matplotlib
+import pickle
+from vector_main import saveObject
 
 matplotlib.use('QtAgg')
 
@@ -28,19 +30,72 @@ def plot_semi_major(position_saves, velocity_saves, time_saves):
     velocity_saves = degrade(velocity_saves).swapaxes(0, 1)
     time_saves = degrade(time_saves)
 
+    plt.figure()
+    plt.clf()
+    ax = plt.gca()
+
     targets = range(1, len(position_saves))
     for i in targets:
-        r = np.sqrt(np.sum(position_saves[i]**2, 1))
-        vsquared = np.sum(velocity_saves[i]**2, 1)
-        E = .5 * vsquared - G_TIMES_MASS_SUN / r
-        semi_majors = - G_TIMES_MASS_SUN / (2 * E * AU)
-        plt.plot(time_saves, semi_majors, label='planet ' + str(i))
+        color = next(ax._get_lines.prop_cycler)['color']
+        semi_majors = calculate_semi_major(position_saves[i], velocity_saves[i]) / AU
+        print(np.shape(position_saves[i]))
+        eccentricities = calculate_eccentricity(position_saves[i], velocity_saves[i])
+        print(np.shape(eccentricities))
+        plt.plot(time_saves, semi_majors, label='planet ' + str(i), color=color)
+        plt.plot(time_saves, semi_majors * (1 + eccentricities), color=color)
+        plt.plot(time_saves, semi_majors * (1 - eccentricities), color=color)
 
-    axes = plt.gca()
-    axes.set_ybound(lower=0, upper=40)
+    ax = plt.gca()
+    ax.set_ybound(lower=0, upper=30)
     plt.legend()
     plt.xlabel("time (yr)")
-    plt.ylabel("semi-major (AU)")
+    plt.ylabel("$a/q/Q$ (AU)")
+    plt.show()
+
+
+def plot_eccentricities(position_saves, velocity_saves, time_saves):
+    position_saves = degrade(position_saves).swapaxes(0, 1)
+    velocity_saves = degrade(velocity_saves).swapaxes(0, 1)
+    time_saves = degrade(time_saves)
+
+    plt.figure()
+    plt.clf()
+    ax = plt.gca()
+
+    targets = range(1, len(position_saves))
+    for i in targets:
+        color = next(ax._get_lines.prop_cycler)['color']
+        eccentricities = calculate_eccentricity(position_saves[i], velocity_saves[i])
+        plt.plot(time_saves, eccentricities, label='planet ' + str(i), color=color)
+
+    axes = plt.gca()
+    axes.set_ybound(lower=0, upper=1)
+    plt.legend()
+    plt.xlabel("time (yr)")
+    plt.ylabel("eccentricity")
+    plt.show()
+
+
+def plot_inclination(position_saves, velocity_saves, time_saves):
+    position_saves = degrade(position_saves).swapaxes(0, 1)
+    velocity_saves = degrade(velocity_saves).swapaxes(0, 1)
+    time_saves = degrade(time_saves)
+
+    plt.figure()
+    plt.clf()
+    ax = plt.gca()
+
+    targets = range(1, len(position_saves))
+    for i in targets:
+        color = next(ax._get_lines.prop_cycler)['color']
+        eccentricities = calculate_inclination(position_saves[i], velocity_saves[i])
+        plt.plot(time_saves, eccentricities, label='planet ' + str(i), color=color)
+
+    axes = plt.gca()
+    axes.set_ybound(lower=-np.pi, upper=np.pi)
+    plt.legend()
+    plt.xlabel("time (yr)")
+    plt.ylabel("inclination (rad)")
     plt.show()
 
 
@@ -103,7 +158,7 @@ def calculate_semi_major(position_values, velocity_values):
 
 def calculate_eccentricity(position_values, velocity_values):
     h = np.cross(position_values, velocity_values, -1)
-    return np.linalg.norm(np.cross(velocity_values, h, -1) / G_TIMES_MASS_SUN - position_values / np.sqrt(np.sum(position_values**2, -1)))
+    return np.linalg.norm(np.cross(velocity_values, h, -1) / G_TIMES_MASS_SUN - position_values / (np.sqrt(np.sum(position_values**2, -1))[..., np.newaxis]), axis=-1)
 
 
 def calculate_varpi(position_values, velocity_values):
@@ -114,16 +169,17 @@ def calculate_varpi(position_values, velocity_values):
 
 
 def main():
-    name = 'Close_Encounter_Test1'
+    name = 'Close_Encounter_Test10'
+    with open(name + '.pkl', 'rb') as inp:
+        save_object = pickle.load(inp)
 
-    position_saves = np.load('saves/' + name + '_position.npy', allow_pickle=True)
-    velocity_saves = np.load('saves/' + name + '_velocity.npy', allow_pickle=True)
-    time_saves = np.load('saves/' + name + '_time.npy', allow_pickle=True)
+    position_saves = save_object.position_saves
+    velocity_saves = save_object.velocity_saves
+    time_saves = save_object.time_saves
 
-    print(np.shape(position_saves))
-
-    show_states(position_saves, velocity_saves, time_saves)
     plot_semi_major(position_saves, velocity_saves, time_saves)
+    plot_eccentricities(position_saves, velocity_saves, time_saves)
+    plot_inclination(position_saves, velocity_saves, time_saves)
 
 
 if __name__ == "__main__":

@@ -1,17 +1,7 @@
-import random
-
 import numpy as np
-import matplotlib
-import matplotlib.pyplot as plt
-from itertools import combinations
-from matplotlib.widgets import Slider
-import copy
 import pickle
 import math
-import time
-from numba import jit
-
-matplotlib.use('QtAgg')
+from numba import njit
 
 G = 6.674e-11  # m3 kg-1 s-2
 AU = 1.496e+11 #m
@@ -54,7 +44,7 @@ def orbit(a, e=0, Omega=None, omega=None, i=None):
     if omega is None:
         omega = np.random.uniform(0, 2 * np.pi)
     if i is None:
-        i = np.random.uniform(-0.3, 0.3)
+        i = np.random.uniform(-5/180 * np.pi, 5/180 * np.pi)
     if Omega is None:
         Omega = np.random.uniform(0, 2*np.pi)
     rotated_system_matrix = np.matmul(np.matmul(rotation_matrix(Omega), rotation_matrix(i, axis='y')), rotation_matrix(omega))
@@ -78,10 +68,10 @@ def nice_model_objects():
     return position_list, velocity_list, mass_list
 
 
-def run_gravity_simulation(position_list, velocity_list, mass_list, number_of_iterations, dt):
+def run_gravity_simulation(position_list, velocity_list, mass_list, number_of_iterations, number_of_saves=None, dt=1e6):
     position_array, velocity_array, acceleration_array, gravity_interaction_constant, infinite_diagonal = initialise_system(
         position_list, velocity_list, mass_list)
-    return numba_run(position_array, velocity_array, acceleration_array, gravity_interaction_constant, infinite_diagonal, number_of_iterations, dt)
+    return numba_run(position_array, velocity_array, acceleration_array, gravity_interaction_constant, infinite_diagonal, number_of_iterations, number_of_saves, dt)
 
 
 def initialise_system(position_list, velocity_list, mass_list):
@@ -122,29 +112,39 @@ def initialise_system(position_list, velocity_list, mass_list):
 
     return position_array, velocity_array, acceleration_array, gravity_interaction_constant, infinite_diagonal
 
+@njit
+def numba_run(position_array, velocity_array, acceleration_array, gravity_interaction_constant, infinite_diagonal, number_of_iterations=10**6, number_of_saves=None, dt=1e6):
+    if number_of_saves is None:
+        number_of_saves = 1000
 
-def numba_run(position_array, velocity_array, acceleration_array, gravity_interaction_constant, infinite_diagonal, number_of_iterations=10**6, dt=1e6):
+    iterations_per_save = number_of_iterations // number_of_saves
+
     n_bodies = np.shape(position_array)[0]
 
-    position_saves = np.zeros((number_of_iterations + 1, n_bodies, 3))
-    velocity_saves = np.zeros((number_of_iterations + 1, n_bodies, 3))
+    position_saves = np.zeros((number_of_saves + 1, n_bodies, 3))
+    velocity_saves = np.zeros((number_of_saves + 1, n_bodies, 3))
     time_saves = [dt / SECONDS_IN_YEAR * i for i in range(number_of_iterations + 1)]
 
-    position_saves[0] = position_array
-    velocity_saves[0] = velocity_array
-    for i in range(number_of_iterations):
-        position_array += velocity_array * dt + .5 * acceleration_array * dt ** 2
 
-        delta_r_matrix = (position_array[np.newaxis, :] - position_array[:, np.newaxis])
-        delta_r_matrix_to_the_minus_3 = (delta_r_matrix[:,:,0]**2 + delta_r_matrix[:,:,1]**2 + delta_r_matrix[:,:,2]**2 + infinite_diagonal) ** (-1.5)
-        accelerations = np.sum((gravity_interaction_constant * delta_r_matrix_to_the_minus_3)[:, :, np.newaxis]
-                               * delta_r_matrix, 1)
+    for i in range(number_of_saves):
+        position_saves[i] = position_array
+        velocity_saves[i] = velocity_array
 
-        velocity_array += .5 * (accelerations + acceleration_array) * dt
-        acceleration_array = accelerations
+        for _ in range(iterations_per_save):
+            position_array += velocity_array * dt + .5 * acceleration_array * dt ** 2
 
-        position_saves[i+1] = position_array
-        velocity_saves[i+1] = velocity_array
+            delta_r_matrix = (position_array[np.newaxis, :] - position_array[:, np.newaxis])
+            delta_r_matrix_to_the_minus_3 = (delta_r_matrix[:,:,0]**2 + delta_r_matrix[:,:,1]**2 + delta_r_matrix[:,:,2]**2 + infinite_diagonal) ** (-1.5)
+            accelerations = np.sum((gravity_interaction_constant * delta_r_matrix_to_the_minus_3)[:, :, np.newaxis]
+                                   * delta_r_matrix, 1)
+
+            velocity_array += .5 * (accelerations + acceleration_array) * dt
+            acceleration_array = accelerations
+
+        print(str(i+1) + '/' + str(number_of_saves))
+
+    position_saves[-1] = position_array
+    velocity_saves[-1] = velocity_array
 
     return position_saves, velocity_saves, time_saves
 
@@ -153,15 +153,22 @@ def main():
     dt = 1e6
     total_time = 1e6  # years
     number_of_iterations = int(total_time * SECONDS_IN_YEAR / dt)
+    number_of_saves = 1000
 
     for i in range(1, 11):
         position_list, velocity_list, mass_list = nice_model_objects()
-        position_saves, velocity_saves, time_saves = run_gravity_simulation(position_list, velocity_list, mass_list, number_of_iterations, dt)
+        position_saves, velocity_saves, time_saves = run_gravity_simulation(position_list, velocity_list, mass_list, number_of_iterations=number_of_iterations, number_of_saves=number_of_saves, dt=dt)
 
         name = 'Close_Encounter_Test' + str(i)
-        np.save('saves/' + name + '_position', position_saves, allow_pickle=True)
-        np.save('saves/' + name + '_velocity', velocity_saves, allow_pickle=True)
-        np.save('saves/' + name + '_time', time_saves, allow_pickle=True)
+        with open(name + '.pkl', 'wb') as outp:
+            pickle.dump(saveObject(position_saves, velocity_saves, time_saves), outp, pickle.HIGHEST_PROTOCOL)
+
+
+class saveObject:
+    def __init__(self, position_saves, velocity_saves, time_saves):
+        self.position_saves = position_saves
+        self.velocity_saves = velocity_saves
+        self.time_saves = time_saves
 
 
 if __name__ == "__main__":
