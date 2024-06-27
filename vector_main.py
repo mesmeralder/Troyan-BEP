@@ -37,60 +37,28 @@ SIGMA = M_EARTH * 10**-5 / (np.pi * DISTANCE_NEPTUNE ** 2)
 SECONDS_IN_YEAR = 3.15e7
 
 
-def numba_run(position_array, velocity_array, acceleration_array, gravity_interaction_constant, infinite_diagonal, number_of_iterations=10**6, dt=1e6):
-    n_bodies = np.shape(position_array)[0]
-
-    position_saves = np.zeros((number_of_iterations + 1, n_bodies, 3))
-    velocity_saves = np.zeros((number_of_iterations + 1, n_bodies, 3))
-    time_saves = [dt * i for i in range(number_of_iterations + 1)]
-
-    position_saves[0] = position_array
-    velocity_saves[0] = velocity_array
-    for i in range(number_of_iterations):
-        position_array += velocity_array * dt + .5 * acceleration_array * dt ** 2
-
-        delta_r_matrix = (position_array[np.newaxis, :] - position_array[:, np.newaxis])
-        delta_r_matrix_to_the_minus_3 = (delta_r_matrix[:,:,0]**2 + delta_r_matrix[:,:,1]**2 + delta_r_matrix[:,:,2]**2 + infinite_diagonal) ** (-1.5)
-        accelerations = np.sum((gravity_interaction_constant * delta_r_matrix_to_the_minus_3)[:, :, np.newaxis]
-                               * delta_r_matrix, 1)
-
-        velocity_array += .5 * (accelerations + acceleration_array) * dt
-        acceleration_array = accelerations
-
-        position_saves[i+1] = position_array
-        velocity_saves[i+1] = velocity_array
-
-    return position_saves, velocity_saves, time_saves
-
-
-def get_acceleration(position_array, gravity_interaction_constant, infinite_diagonal):
-    delta_r_matrix = position_array[np.newaxis, :] - position_array[:, np.newaxis]
-    delta_r_matrix_to_the_minus_3 = (delta_r_matrix[:, :, 0] ** 2 +
-                                     delta_r_matrix[:, :, 1] ** 2 + infinite_diagonal) ** (-1.5)
-    return np.sum((gravity_interaction_constant * delta_r_matrix_to_the_minus_3)[:, :, np.newaxis]
-                                   * delta_r_matrix, 1)
-
-
 def rotation_matrix(angle, axis='z'):
     if axis == 'z':
         return np.array([[np.cos(angle), -np.sin(angle), 0], [np.sin(angle), np.cos(angle), 0], [0, 0, 1]])
-    if axis == 'y':
+    elif axis == 'y':
         return np.array([[np.cos(angle), 0, np.sin(angle)], [0, 1, 0], [-np.sin(angle), 0, np.cos(angle)]])
-    if axis == 'x':
+    elif axis == 'x':
         return np.array([[1, 0, 0], [0, np.cos(angle), -np.sin(angle)], [0, np.sin(angle), np.cos(angle)]])
+    else:
+        raise Exception("Invalid axis")
 
 
 def orbit(a, e=0, Omega=None, omega=None, i=None):
     if e is None:
         e = np.random.uniform(0, 0.1)
     if omega is None:
-        omega = np.random.uniform(0, 2*np.pi)
+        omega = np.random.uniform(0, 2 * np.pi)
     if i is None:
         i = np.random.uniform(-0.3, 0.3)
     if Omega is None:
         Omega = np.random.uniform(0, 2*np.pi)
-    rotated_system_matrix = rotation_matrix(omega)
-    return (np.matmul(rotated_system_matrix, np.array([a*(1-e), 0, 0])),
+    rotated_system_matrix = np.matmul(np.matmul(rotation_matrix(Omega), rotation_matrix(i, axis='y')), rotation_matrix(omega))
+    return ( np.matmul(rotated_system_matrix, np.array([a*(1-e), 0, 0])),
             np.matmul(rotated_system_matrix, np.array([0, np.sqrt(G_TIMES_MASS_SUN * (1+e) / (a * (1-e))), 0])))
 
 
@@ -102,12 +70,18 @@ def nice_model_objects():
     position_list = [0] * 4
     velocity_list = [0] * 4
     for i, radius in enumerate(radius_list):
-        position_list[i] = orbit(radius)[0]
-        velocity_list[i] = orbit(radius)[1]
+        orbit_values = orbit(radius)
+        position_list[i], velocity_list[i] = orbit_values[0], orbit_values[1]
 
     mass_list = [MASS_JUPITER, MASS_SATURN, MASS_URANUS, MASS_NEPTUNE]
 
     return position_list, velocity_list, mass_list
+
+
+def run_gravity_simulation(position_list, velocity_list, mass_list, number_of_iterations, dt):
+    position_array, velocity_array, acceleration_array, gravity_interaction_constant, infinite_diagonal = initialise_system(
+        position_list, velocity_list, mass_list)
+    return numba_run(position_array, velocity_array, acceleration_array, gravity_interaction_constant, infinite_diagonal, number_of_iterations, dt)
 
 
 def initialise_system(position_list, velocity_list, mass_list):
@@ -146,29 +120,48 @@ def initialise_system(position_list, velocity_list, mass_list):
     acceleration_array = np.sum((gravity_interaction_constant * delta_r_matrix_to_the_minus_3)[:, :, np.newaxis]
                                 * delta_r_matrix, 1)
 
-    print(acceleration_array)
     return position_array, velocity_array, acceleration_array, gravity_interaction_constant, infinite_diagonal
 
 
-def run_gravity_simulation(position_list, velocity_list, mass_list, number_of_iterations, dt):
-    position_array, velocity_array, acceleration_array, gravity_interaction_constant, infinite_diagonal = initialise_system(
-        position_list, velocity_list, mass_list)
-    return numba_run(position_array, velocity_array, acceleration_array, gravity_interaction_constant, infinite_diagonal, number_of_iterations, dt)
+def numba_run(position_array, velocity_array, acceleration_array, gravity_interaction_constant, infinite_diagonal, number_of_iterations=10**6, dt=1e6):
+    n_bodies = np.shape(position_array)[0]
+
+    position_saves = np.zeros((number_of_iterations + 1, n_bodies, 3))
+    velocity_saves = np.zeros((number_of_iterations + 1, n_bodies, 3))
+    time_saves = [dt / SECONDS_IN_YEAR * i for i in range(number_of_iterations + 1)]
+
+    position_saves[0] = position_array
+    velocity_saves[0] = velocity_array
+    for i in range(number_of_iterations):
+        position_array += velocity_array * dt + .5 * acceleration_array * dt ** 2
+
+        delta_r_matrix = (position_array[np.newaxis, :] - position_array[:, np.newaxis])
+        delta_r_matrix_to_the_minus_3 = (delta_r_matrix[:,:,0]**2 + delta_r_matrix[:,:,1]**2 + delta_r_matrix[:,:,2]**2 + infinite_diagonal) ** (-1.5)
+        accelerations = np.sum((gravity_interaction_constant * delta_r_matrix_to_the_minus_3)[:, :, np.newaxis]
+                               * delta_r_matrix, 1)
+
+        velocity_array += .5 * (accelerations + acceleration_array) * dt
+        acceleration_array = accelerations
+
+        position_saves[i+1] = position_array
+        velocity_saves[i+1] = velocity_array
+
+    return position_saves, velocity_saves, time_saves
 
 
 def main():
-    dt = 1e5
-    total_time = 1e2  # years
-    number_of_iterations = 1000
-    # int(total_time * SECONDS_IN_YEAR / dt)
+    dt = 1e6
+    total_time = 1e6  # years
+    number_of_iterations = int(total_time * SECONDS_IN_YEAR / dt)
 
-    position_list, velocity_list, mass_list = nice_model_objects()
-    position_saves, velocity_saves, time_saves = run_gravity_simulation(position_list, velocity_list, mass_list, number_of_iterations, dt)
+    for i in range(1, 11):
+        position_list, velocity_list, mass_list = nice_model_objects()
+        position_saves, velocity_saves, time_saves = run_gravity_simulation(position_list, velocity_list, mass_list, number_of_iterations, dt)
 
-    name = 'Test'
-    np.save('saves/' + name + '_position', position_saves, allow_pickle=True)
-    np.save('saves/' + name + '_velocity', velocity_saves, allow_pickle=True)
-    np.save('saves/' + name + '_time', time_saves, allow_pickle=True)
+        name = 'Close_Encounter_Test' + str(i)
+        np.save('saves/' + name + '_position', position_saves, allow_pickle=True)
+        np.save('saves/' + name + '_velocity', velocity_saves, allow_pickle=True)
+        np.save('saves/' + name + '_time', time_saves, allow_pickle=True)
 
 
 if __name__ == "__main__":
